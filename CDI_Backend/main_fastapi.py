@@ -20,6 +20,7 @@ from typing import Optional
 import shutil
 import subprocess
 import sys
+from openai import OpenAI
 
 app = FastAPI(title="Crop Disease Identification API", version="1.0.0")
 
@@ -36,9 +37,116 @@ app.add_middleware(
 API_URL = "https://crop.kindwise.com/api/v1/identification"
 API_KEY = "u12lFbhGXOPacNJgi4pqK2scNsm34OryIiw99IIPJLKzjgntD5"
 
+# DeepSeek Configuration
+DEEPSEEK_CLIENT = OpenAI(
+    api_key="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",
+    base_url="https://openrouter.ai/api/v1"
+)
+
 # Create uploads directory if it doesn't exist
 UPLOAD_DIR = "uploads"
 os.makedirs(UPLOAD_DIR, exist_ok=True)
+
+async def get_deepseek_treatment(crops, diseases):
+    """Get treatment recommendations from DeepSeek AI"""
+    try:
+        # Create a prompt for DeepSeek
+        prompt = "You are an expert agricultural consultant. Based on the following crop analysis results, provide brief treatment and care recommendations:\n\n"
+        
+        if crops:
+            prompt += "Identified Crops:\n"
+            for crop in crops:
+                prompt += f"- {crop['name']} ({crop['scientific_name']}): {crop['confidence']}% confidence\n"
+        
+        if diseases:
+            prompt += "\nDetected Plant Health Issues:\n"
+            for disease in diseases:
+                prompt += f"- {disease['name']}: {disease['confidence']}% confidence\n"
+        else:
+            prompt += "\nNo diseases detected - plant appears healthy.\n"
+        
+        prompt += "\nPlease provide:\n1. Brief assessment of the plant condition\n2. Immediate treatment recommendations (if needed)\n3. General care tips\n4. When to seek further consultation\n\nKeep the response concise but informative (maximum 200 words)."
+        
+        # Call DeepSeek API with proper headers
+        completion = DEEPSEEK_CLIENT.chat.completions.create(
+            model="deepseek/deepseek-chat",
+            messages=[
+                {"role": "system", "content": "You are an expert agricultural consultant specializing in crop disease diagnosis and treatment."},
+                {"role": "user", "content": prompt}
+            ],
+            max_tokens=300,
+            temperature=0.7,
+            extra_headers={
+                "HTTP-Referer": "http://localhost:8000",
+                "X-Title": "Crop Disease Identification API"
+            }
+        )
+        
+        return completion.choices[0].message.content.strip()
+        
+    except Exception as e:
+        print(f"DeepSeek API Error: {str(e)}")
+        # Fallback to basic treatment recommendations
+        return get_basic_treatment_recommendations(crops, diseases)
+
+def get_basic_treatment_recommendations(crops, diseases):
+    """Provide basic treatment recommendations when AI API is unavailable"""
+    recommendations = "🌱 Basic Treatment Recommendations:\n\n"
+    
+    if diseases and len(diseases) > 0:
+        recommendations += "⚠️ Plant Health Issues Detected:\n"
+        for disease in diseases:
+            disease_name = disease['name'].lower()
+            
+            # Basic recommendations based on common disease types
+            if 'blight' in disease_name or 'spot' in disease_name:
+                recommendations += f"• {disease['name']}: Remove affected leaves, improve air circulation, consider copper-based fungicide.\n"
+            elif 'rust' in disease_name:
+                recommendations += f"• {disease['name']}: Remove infected parts, avoid overhead watering, apply fungicide if severe.\n"
+            elif 'mildew' in disease_name:
+                recommendations += f"• {disease['name']}: Increase air circulation, reduce humidity, consider organic fungicide treatment.\n"
+            elif 'rot' in disease_name:
+                recommendations += f"• {disease['name']}: Improve drainage, reduce watering, remove affected parts immediately.\n"
+            elif 'wilt' in disease_name:
+                recommendations += f"• {disease['name']}: Check soil drainage, adjust watering schedule, may need soil treatment.\n"
+            else:
+                recommendations += f"• {disease['name']}: Monitor closely, maintain good plant hygiene, consult agricultural expert.\n"
+        
+        recommendations += "\n🚨 General Disease Management:\n"
+        recommendations += "- Remove and dispose of infected plant material\n"
+        recommendations += "- Improve air circulation around plants\n"
+        recommendations += "- Water at soil level, avoid wetting leaves\n"
+        recommendations += "- Apply preventive treatments if recommended\n"
+        recommendations += "- Monitor daily for disease progression\n"
+    else:
+        recommendations += "✅ Plant Health Status: HEALTHY\n"
+        recommendations += "No diseases detected. Your crop appears to be in good condition!\n\n"
+        recommendations += "🌿 Preventive Care Tips:\n"
+        recommendations += "- Maintain regular watering schedule\n"
+        recommendations += "- Ensure proper soil drainage\n"
+        recommendations += "- Provide adequate nutrition\n"
+        recommendations += "- Monitor for early signs of stress\n"
+        recommendations += "- Keep growing area clean\n"
+    
+    if crops and len(crops) > 0:
+        crop_name = crops[0]['name'].lower()
+        recommendations += f"\n🌾 Specific Care for {crops[0]['name']}:\n"
+        
+        # Basic care tips for common crops
+        if 'tomato' in crop_name:
+            recommendations += "- Provide support/stakes for growth\n- Regular pruning of suckers\n- Deep, infrequent watering\n"
+        elif 'corn' in crop_name or 'maize' in crop_name:
+            recommendations += "- Ensure adequate spacing\n- Side-dress with nitrogen fertilizer\n- Monitor for corn borer\n"
+        elif 'wheat' in crop_name:
+            recommendations += "- Monitor soil moisture\n- Watch for rust diseases\n- Time harvest properly\n"
+        elif 'rice' in crop_name:
+            recommendations += "- Maintain proper water levels\n- Monitor for blast disease\n- Ensure good drainage during maturity\n"
+        else:
+            recommendations += "- Follow standard crop management practices\n- Monitor growth stages\n- Adjust care based on plant needs\n"
+    
+    recommendations += "\n💡 For detailed consultation, click 'Send to ChatBot' below."
+    
+    return recommendations
 
 @app.get("/", response_class=HTMLResponse)
 async def get_upload_form():
@@ -74,11 +182,16 @@ async def get_upload_form():
             <button class="button" id="analyzeBtn" onclick="analyzeImage()" disabled>Analyze Crop</button>
             <button class="button" id="chatbotBtn" onclick="sendToChatbot()" disabled style="background: #2196F3;">Send to ChatBot</button>
             
-            <div class="loading" id="loading">🔍 Analyzing your crop image...</div>
+            <div class="loading" id="loading">🔍 Analyzing your crop image and getting AI treatment recommendations...</div>
             
             <div class="results" id="results" style="display: none;">
                 <h3>Analysis Results:</h3>
                 <div id="resultsContent"></div>
+                
+                <div id="treatmentSection" style="margin-top: 20px; padding: 15px; background: #f0f8ff; border-radius: 5px; border-left: 4px solid #2196F3;">
+                    <h4>🤖 AI Treatment Recommendations:</h4>
+                    <div id="treatmentContent" style="white-space: pre-wrap;"></div>
+                </div>
             </div>
         </div>
 
@@ -160,6 +273,13 @@ async def get_upload_form():
 
                 document.getElementById('resultsContent').innerHTML = html;
                 document.getElementById('results').style.display = 'block';
+                
+                // Display AI treatment recommendations if available
+                if (result.ai_treatment) {
+                    document.getElementById('treatmentContent').textContent = result.ai_treatment;
+                } else {
+                    document.getElementById('treatmentContent').textContent = 'AI treatment recommendations not available.';
+                }
             }
 
             async function sendToChatbot() {
@@ -277,6 +397,18 @@ async def analyze_crop_image(file: UploadFile = File(...)):
                 'image_filename': file.filename
             }
             
+            # Automatically get AI treatment recommendations from DeepSeek
+            print("Getting AI treatment recommendations...")
+            try:
+                ai_treatment = await get_deepseek_treatment(crops, diseases)
+                result_summary['ai_treatment'] = ai_treatment
+                print("AI treatment recommendations obtained successfully")
+            except Exception as ai_error:
+                print(f"AI treatment error: {str(ai_error)}")
+                # Use basic recommendations as fallback
+                ai_treatment = get_basic_treatment_recommendations(crops, diseases)
+                result_summary['ai_treatment'] = ai_treatment
+            
             # Save to temporary files for chatbot integration
             crop_data_file = os.path.join(UPLOAD_DIR, "latest_analysis.json")
             with open(crop_data_file, "w") as f:
@@ -325,6 +457,10 @@ async def send_to_chatbot(analysis_data: dict):
         elif analysis_data.get('crops'):
             crop_summary += "\nNo diseases detected. The plant appears healthy.\n"
         
+        # Add AI treatment recommendations if available
+        if analysis_data.get('ai_treatment'):
+            crop_summary += f"\nAI Treatment Recommendations:\n{analysis_data['ai_treatment']}\n"
+        
         # Save data for chatbot
         chatbot_data = {
             "crop_summary": crop_summary,
@@ -366,7 +502,8 @@ async def api_info():
     return {
         "name": "Crop Disease Identification API",
         "version": "1.0.0",
-        "description": "REST API for crop disease identification using KindWise API",
+        "description": "REST API for crop disease identification using KindWise API with automatic AI treatment recommendations from DeepSeek",
+        "workflow": "1. Upload image → 2. KindWise analysis → 3. Automatic DeepSeek AI treatment → 4. Combined results output → 5. Optional chatbot consultation",
         "endpoints": {
             "/": "Upload form (HTML interface)",
             "/analyze": "POST - Analyze crop image",
