@@ -1,7 +1,7 @@
 """
 Crop Analysis API Module
 -----------------------
-This module provides a way for the chatbot to access the crop identification API
+This module provides a way for the chatbot to access the KindWise crop identification API
 without needing to use the GUI application.
 """
 
@@ -20,9 +20,9 @@ class CropAnalyzer:
     """
     
     def __init__(self):
-        # API Details
-        self.api_url = "https://api.deepleaf.io/analyze"
-        self.api_key = "feed_the_world_bLLeZuQkUdTXxs13RpEWrYzzx05AIHOjHSrhItNIsbY"
+        # API Details - Using KindWise API (same as test.py)
+        self.api_url = "https://crop.kindwise.com/api/v1/identification"
+        self.api_key = "u12lFbhGXOPacNJgi4pqK2scNsm34OryIiw99IIPJLKzjgntD5"
     
     def analyze_image_bytes(self, image_bytes):
         """
@@ -62,14 +62,15 @@ class CropAnalyzer:
             # Encode the image bytes to base64
             encoded_string = base64.b64encode(image_bytes).decode('utf-8')
             
-            # Make the API request
+            # Make the API request using KindWise format
             headers = {
                 'Content-Type': 'application/json',
-                'Authorization': f'Bearer {self.api_key}'
+                'Api-Key': self.api_key
             }
             
             payload = {
-                'image': encoded_string
+                'images': [encoded_string],
+                'similar_images': True
             }
             
             print(f"Sending request to {self.api_url} with auth token")
@@ -140,7 +141,7 @@ class CropAnalyzer:
     
     def generate_summary(self, data):
         """
-        Generate a human-readable summary from the DeepLeaf API response
+        Generate a human-readable summary from the KindWise API response
         
         Args:
             data: The API response JSON
@@ -154,123 +155,38 @@ class CropAnalyzer:
             # Print the raw data for debugging
             print("API Response Structure:", json.dumps(data, indent=2)[:500] + "..." if len(json.dumps(data)) > 500 else json.dumps(data, indent=2))
             
-            # Handle various potential response formats
-            
-            # Try standard format first
-            if 'analysis' in data and data['analysis']:
-                analysis_data = data['analysis']
+            # Handle KindWise API response format
+            if 'result' in data and data['result'] and 'crop' in data['result']:
+                crop_data = data['result']['crop']
                 
                 # Add crop identification info
-                if 'plant_species' in analysis_data and analysis_data['plant_species']:
-                    crops = analysis_data['plant_species']
-                    if crops:
-                        summary += "Identified Crops:\n"
-                        for crop in crops:
-                            crop_name = crop.get('common_name', 'Unknown')
-                            scientific_name = crop.get('scientific_name', '')
-                            confidence = crop.get('confidence', 0) * 100
-                            summary += f"- {crop_name} ({scientific_name}): {confidence:.2f}% confidence\n"
-                    else:
-                        summary += "No crops identified.\n"
+                if 'suggestions' in crop_data and crop_data['suggestions']:
+                    summary += "Identified Crops:\n"
+                    for i, crop in enumerate(crop_data['suggestions']):
+                        crop_name = crop.get('name', 'Unknown')
+                        scientific_name = crop.get('scientific_name', '')
+                        confidence = crop.get('probability', 0) * 100
+                        summary += f"- {crop_name} ({scientific_name}): {confidence:.2f}% confidence\n"
+                else:
+                    summary += "No crops identified.\n"
                 
                 # Add disease information if available
-                if 'diseases' in analysis_data and analysis_data['diseases']:
-                    diseases = analysis_data['diseases']
-                    if diseases:
+                if 'disease' in data['result'] and 'suggestions' in data['result']['disease']:
+                    disease_suggestions = data['result']['disease']['suggestions']
+                    if disease_suggestions:
                         summary += "\nPlant Health Conditions:\n"
-                        for condition in diseases:
+                        for condition in disease_suggestions:
                             condition_name = condition.get('name', 'Unknown')
-                            confidence = condition.get('confidence', 0) * 100
+                            confidence = condition.get('probability', 0) * 100
                             summary += f"- {condition_name}: {confidence:.2f}% confidence\n"
-                            
-                            # Add treatment recommendations if available
-                            if 'treatments' in condition and condition['treatments']:
-                                summary += "  Recommended treatments:\n"
-                                for treatment in condition['treatments']:
-                                    summary += f"  • {treatment}\n"
                     else:
                         summary += "\nNo diseases detected. The plant appears healthy.\n"
-                        
-                # Add general health assessment if available
-                if 'health_assessment' in analysis_data:
-                    health = analysis_data['health_assessment']
-                    summary += f"\nOverall Plant Health: {health.get('status', 'Unknown')}\n"
-                    if 'recommendations' in health and health['recommendations']:
-                        summary += "General Recommendations:\n"
-                        for rec in health['recommendations']:
-                            summary += f"- {rec}\n"
-            
-            # Check for alternative format
-            elif 'results' in data:
-                results = data['results']
-                
-                # Check if it's a list of results
-                if isinstance(results, list) and results:
-                    result = results[0]  # Take the first result
-                    
-                    # Parse plant info
-                    if 'species' in result:
-                        species = result['species']
-                        summary += "Identified Crop:\n"
-                        common_name = species.get('common_name', 'Unknown')
-                        scientific_name = species.get('scientific_name', '')
-                        confidence = species.get('probability', 0) * 100
-                        summary += f"- {common_name} ({scientific_name}): {confidence:.2f}% confidence\n"
-                    
-                    # Parse disease info
-                    if 'diseases' in result and result['diseases']:
-                        diseases = result['diseases']
-                        summary += "\nPlant Health Conditions:\n"
-                        for disease in diseases:
-                            name = disease.get('name', 'Unknown condition')
-                            confidence = disease.get('probability', 0) * 100
-                            summary += f"- {name}: {confidence:.2f}% confidence\n"
-                            
-                            # Add details if available
-                            if 'description' in disease:
-                                summary += f"  Description: {disease['description']}\n"
-                            
-                            if 'treatment' in disease:
-                                summary += "  Recommended treatment:\n"
-                                summary += f"  • {disease['treatment']}\n"
-                
-                # If it's a direct object not in a list
-                elif isinstance(results, dict):
-                    # Parse plant info
-                    if 'species' in results:
-                        species = results['species']
-                        summary += "Identified Crop:\n"
-                        common_name = species.get('common_name', 'Unknown')
-                        scientific_name = species.get('scientific_name', '')
-                        confidence = species.get('probability', 0) * 100
-                        summary += f"- {common_name} ({scientific_name}): {confidence:.2f}% confidence\n"
-                    
-                    # Parse disease info
-                    if 'diseases' in results and results['diseases']:
-                        diseases = results['diseases']
-                        summary += "\nPlant Health Conditions:\n"
-                        for disease in diseases:
-                            name = disease.get('name', 'Unknown condition')
-                            confidence = disease.get('probability', 0) * 100
-                            summary += f"- {name}: {confidence:.2f}% confidence\n"
+                else:
+                    summary += "\nNo disease analysis available.\n"
             else:
-                # Last resort - try to extract any useful information from the raw response
-                summary += "Raw Analysis Results:\n"
-                for key, value in data.items():
-                    if isinstance(value, dict):
-                        summary += f"\n{key.capitalize()}:\n"
-                        for subkey, subvalue in value.items():
-                            summary += f"- {subkey}: {subvalue}\n"
-                    elif isinstance(value, list):
-                        summary += f"\n{key.capitalize()}:\n"
-                        for item in value:
-                            if isinstance(item, dict):
-                                for ikey, ivalue in item.items():
-                                    summary += f"- {ikey}: {ivalue}\n"
-                            else:
-                                summary += f"- {item}\n"
-                    else:
-                        summary += f"{key}: {value}\n"
+                # Fallback for unexpected response format
+                summary += "Unable to parse crop identification results.\n"
+                summary += f"Raw response available for debugging: {str(data)[:200]}...\n"
                 
             return summary
             

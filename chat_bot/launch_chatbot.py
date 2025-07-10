@@ -18,7 +18,7 @@ def main():
     
     # Get the path to the chatbot script
     script_dir = os.path.dirname(os.path.abspath(__file__))
-    chatbot_path = os.path.join(script_dir, "CDI_CHAT_BOT.py")
+    chatbot_path = os.path.join(script_dir, "CDI_CHAT_BOT_new.py")
     
     # Check if streamlit is installed
     streamlit_path = shutil.which("streamlit")
